@@ -1,108 +1,74 @@
 #!/usr/bin/env python3
-""" module """
+""" Module for testing utils """
 
-from client import GithubOrgClient
-from fixtures import TEST_PAYLOAD
-from parameterized import parameterized, parameterized_class
-import json
+from parameterized import parameterized
 import unittest
-from unittest.mock import patch, PropertyMock, Mock
+from unittest.mock import patch
+from utils import (access_nested_map, get_json, memoize)
+import requests
 
 
-class TestGithubOrgClient(unittest.TestCase):
-    """ class """
-
-    @parameterized.expand([
-        ('google'),
-        ('abc')
-    ])
-    @patch('client.get_json')
-    def test_org(self, input, mock):
-        """method"""
-        test_class = GithubOrgClient(input)
-        test_class.org()
-        mock.assert_called_once_with(f'https://api.github.com/orgs/{input}')
-
-    def test_public_repos_url(self):
-        """ method """
-        with patch('client.GithubOrgClient.org',
-                   new_callable=PropertyMock) as mock:
-            payload = {"repos_url": "World"}
-            mock.return_value = payload
-            test_class = GithubOrgClient('test')
-            result = test_class._public_repos_url
-            self.assertEqual(result, payload["repos_url"])
-
-    @patch('client.get_json')
-    def test_public_repos(self, mock_json):
-        """ukjfdh"""
-        json_payload = [{"name": "Google"}, {"name": "Twitter"}]
-        mock_json.return_value = json_payload
-
-        with patch('client.GithubOrgClient._public_repos_url',
-                   new_callable=PropertyMock) as mock_public:
-
-            mock_public.return_value = "hello/world"
-            test_class = GithubOrgClient('test')
-            result = test_class.public_repos()
-
-            check = [i["name"] for i in json_payload]
-            self.assertEqual(result, check)
-
-            mock_public.assert_called_once()
-            mock_json.assert_called_once()
+class TestAccessNestedMap(unittest.TestCase):
+    """ Class for Testing Access Nested Map """
 
     @parameterized.expand([
-        ({"license": {"key": "my_license"}}, "my_license", True),
-        ({"license": {"key": "other_license"}}, "my_license", False)
+        ({"a": 1}, ("a",), 1),
+        ({"a": {"b": 2}}, ("a",), {'b': 2}),
+        ({"a": {"b": 2}}, ("a", "b"), 2)
     ])
-    def test_has_license(self, repo, license_key, expected):
-        """ fggr """
-        result = GithubOrgClient.has_license(repo, license_key)
-        self.assertEqual(result, expected)
+    def test_access_nested_map(self, nested_map, path, expected):
+        """ Test that the method returns what it is supposed to """
+        self.assertEqual(access_nested_map(nested_map, path), expected)
+
+    @parameterized.expand([
+        ({}, ("a",), 'a'),
+        ({"a": 1}, ("a", "b"), 'b')
+    ])
+    def test_access_nested_map_exception(self, nested_map, path, expected):
+        """ Test that a KeyError is raised for the respective inputs """
+        with self.assertRaises(KeyError) as e:
+            access_nested_map(nested_map, path)
+        self.assertEqual(f"KeyError('{expected}')", repr(e.exception))
 
 
-@parameterized_class(
-    ("org_payload", "repos_payload", "expected_repos", "apache2_repos"),
-    TEST_PAYLOAD
-)
-class TestIntegrationGithubOrgClient(unittest.TestCase):
-    """ Class """
+class TestGetJson(unittest.TestCase):
+    """ Class for Testing Get Json """
 
-    @classmethod
-    def setUpClass(cls):
-        """method"""
-        config = {'return_value.json.side_effect':
-                  [
-                      cls.org_payload, cls.repos_payload,
-                      cls.org_payload, cls.repos_payload
-                  ]
-                  }
-        cls.get_patcher = patch('requests.get', **config)
+    @parameterized.expand([
+        ("http://example.com", {"payload": True}),
+        ("http://holberton.io", {"payload": False})
+    ])
+    def test_get_json(self, test_url, test_payload):
+        """ Test that utils.get_json returns the expected result."""
+        config = {'return_value.json.return_value': test_payload}
+        patcher = patch('requests.get', **config)
+        mock = patcher.start()
+        self.assertEqual(get_json(test_url), test_payload)
+        mock.assert_called_once()
+        patcher.stop()
 
-        cls.mock = cls.get_patcher.start()
 
-    def test_public_repos(self):
-        """ method """
-        test_class = GithubOrgClient("google")
+class TestMemoize(unittest.TestCase):
+    """ Class for Testing Memoize """
 
-        self.assertEqual(test_class.org, self.org_payload)
-        self.assertEqual(test_class.repos_payload, self.repos_payload)
-        self.assertEqual(test_class.public_repos(), self.expected_repos)
-        self.assertEqual(test_class.public_repos("XLICENSE"), [])
-        self.mock.assert_called()
+    def test_memoize(self):
+        """ Test that when calling a_property twice, the correct result
+        is returned but a_method is only called once using
+        assert_called_once
+        """
 
-    def test_public_repos_with_license(self):
-        """ method """
-        test_class = GithubOrgClient("google")
+        class TestClass:
+            """ Test Class for wrapping with memoize """
 
-        self.assertEqual(test_class.public_repos(), self.expected_repos)
-        self.assertEqual(test_class.public_repos("XLICENSE"), [])
-        self.assertEqual(test_class.public_repos(
-            "apache-2.0"), self.apache2_repos)
-        self.mock.assert_called()
+            def a_method(self):
+                return 42
 
-    @classmethod
-    def tearDownClass(cls):
-        """method"""
-        cls.get_patcher.stop()
+            @memoize
+            def a_property(self):
+                return self.a_method()
+
+        with patch.object(TestClass, 'a_method') as mock:
+            test_class = TestClass()
+            test_class.a_property()
+            test_class.a_property()
+            mock.assert_called_once()
